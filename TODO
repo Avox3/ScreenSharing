@@ -1,0 +1,18 @@
+1) Server structure
+    # server socket object (UDP) - select == DONE
+    # setting a connection - implements accept
+        * server gets id request and server returns with registration
+    # take screenshot
+    # send screenshot to clients :
+        * separate screen
+        * check for changes -> if True, return raw
+        * representation of info for each client:
+            TODO - above
+
+2) Client structure
+    # client socket object (UDP)
+    # setting a connection - implements accept
+    # gui - show image
+    # while loop - check for updates
+    # multithreading - combine gui with loop
+    # implement QUIT code
