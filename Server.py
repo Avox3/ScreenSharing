@@ -60,6 +60,7 @@ class Server(object):
                 users.remove(user)
 
 if __name__ == '__main__':
+    # asd
     pass
 
 
