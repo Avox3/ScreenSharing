@@ -3,7 +3,6 @@ import Tkinter as tk
 from PIL import ImageTk
 import socket
 from PIL import Image
-import pygame
 import json
 import threading
 from Utils import Protocol, raw_data_to_img, string_to_raw
@@ -13,44 +12,7 @@ SERVER_IP = '127.0.0.1'  # address of the server
 PORT = 3337  # the port
 BUFFER = 8196  # memory storage size
 # message modes
-INITIALIZE, QUIT_REQUEST, ROW_SECTIONS_LENGTH, SENDING_SECTION = range(4)
-
-
-class Gui(threading.Thread):
-    def __init__(self, screen_width, screen_height):
-        threading.Thread.__init__(self)
-
-        self.white = (255, 255, 255)
-        self.img = None
-
-        # initialize screen
-        pygame.init()
-        pygame.display.set_caption('Basic Screen Sharing Program')
-
-        self.screen = pygame.display.set_mode((screen_width, screen_height))
-        self.screen.fill(self.white)
-        self.clock = pygame.time.Clock()
-        pygame.display.flip()
-
-        self.running = True
-
-    def run(self):
-        while self.running:
-            self.screen.fill(self.white)
-            if self.img:
-                self.screen.blit(self.img, (0, 0))
-
-            pygame.event.get()
-            pygame.display.flip()
-            self.clock.tick(60)
-
-    def update(self, img):
-
-        mode = img.mode
-        size = img.size
-        data = img.tobytes()
-
-        self.img = pygame.image.fromstring(data, size, mode)
+INITIALIZE, QUIT_REQUEST, ROW_SECTIONS_LENGTH, SENDING_IMAGE = range(4)
 
 
 class TkinterFrame(threading.Thread):
@@ -75,7 +37,7 @@ class TkinterFrame(threading.Thread):
         # root has no image argument, so use a label as a panel
         self.start()
 
-    def resize(self, event):
+    def resize(self):
         width, height = self.root.winfo_width(), self.root.winfo_height()
         self.canvas.config(width=width, height=height)
 
@@ -112,7 +74,7 @@ class User(threading.Thread):
         self.canvas_data = None
         self.gui = None
         self.sections = []
-        self.last_section = -1
+        self.sections_length = -1
 
         self.initialize()
 
@@ -170,19 +132,18 @@ class User(threading.Thread):
             return
 
         elif msg_status == ROW_SECTIONS_LENGTH:
-            self.last_section = int(data['SectionsLength'])
-            print "Sections length", self.last_section
+            self.sections_length = int(data['SectionsLength'])
 
-        elif msg_status == SENDING_SECTION:
+        elif msg_status == SENDING_IMAGE:
             self.curr_section = section
             self.sections[section] = raw_data_to_img(string_to_raw(self.protocol.recv_one_message()),
                                                      self.__width / self.__section_x, self.__height / self.__section_y)
 
-            self.last_section -= 1
+            self.sections_length -= 1
 
-            if self.last_section == 0:
+            if self.sections_length == 0:
                 self.create_img()
-                self.last_section = -1
+                self.sections_length = -1
 
     def create_img(self):
 

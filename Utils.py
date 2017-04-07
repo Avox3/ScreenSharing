@@ -1,6 +1,7 @@
 import re
 import struct
 import socket
+import json
 from PIL import Image, ImageChops
 
 
@@ -37,9 +38,40 @@ class Protocol(object):
             count -= len(new_buf)
         return buf
 
+    def send_json(self, status, **kwargs):
+        """
+        This function sends a json message,
+        concluding message's status and another arguments(optional).
+        :param status: what type of message is it
+        :type status: int
+        :param kwargs: another arguments
+        """
+
+        msg_dict = {"Status": status}
+        msg_dict.update(kwargs)
+
+        json_string = json.dumps(msg_dict)
+        self.send_one_message(json_string)
+
+    def send_image(self, img_raw_data, section, message_mode):
+        """
+        This function sends image's raw data to the user.
+
+        :param img_raw_data: image's row data
+        :type img_raw_data: list of tuples
+        :param section: which part of the screenshot is dispatched
+        :param message_mode: the message's mode
+        """
+
+        # notify user about upcoming image's raw data
+        self.send_json(message_mode, Section=section)
+
+        # send image's raw data
+        self.send_one_message(str(img_raw_data))
+
 
 def string_to_raw(data_list):
-    """ this func convert image data to list of tuples - raw data """
+    """ This func convert image data to list of tuples - raw data. """
     data = re.findall(r'(?:\d+,\s){2}\d+', data_list)
     return [tuple([int(y) for y in x.split(', ')]) for x in data]
 
@@ -75,7 +107,7 @@ def compare_images(im1, im2):
 
     """Calculate the root-mean-square difference between two images"""
 
-    return ImageChops.difference(im1, im2).histogram() is None
+    return ImageChops.difference(im1, im2).getbbox() is None
 
     # calculate rms
     # return math.sqrt(reduce(operator.add, map(lambda h, i: h*(i**2), h, range(256))) /
