@@ -1,28 +1,19 @@
 # -*- coding: utf-8 -*-
-import re
 import Tkinter as tk
 from PIL import ImageTk
 import socket
-import sys
 from PIL import Image
 import pygame
 import json
 import threading
-from Utils import Protocol
+from Utils import Protocol, raw_data_to_img, string_to_raw
 
 
 SERVER_IP = '127.0.0.1'  # address of the server
 PORT = 3337  # the port
 BUFFER = 8196  # memory storage size
 # message modes
-INITIALIZE, QUIT_REQUEST, CUR_IMG_OPEN_BUILDING, CUR_IMG_DONE_BUILDING, LAST_IMG_DONE, CUR_IMG_MID_BUILDING = range(6)
-STOP_IMAGE_LOOP = 'STOP PLEASE'
-
-
-def string_to_raw(data_list):
-    """ this func convert image data to list of tuples - raw data """
-    data = re.findall(r'(?:\d+,\s){2}\d+', data_list)
-    return [tuple([int(y) for y in x.split(', ')]) for x in data]
+INITIALIZE, QUIT_REQUEST, ROW_SECTIONS_LENGTH, SENDING_SECTION = range(4)
 
 
 class Gui(threading.Thread):
@@ -118,7 +109,6 @@ class User(threading.Thread):
         self.img_mode = -1
 
         self.curr_section = -1
-        self.counter = 0
         self.canvas_data = None
         self.gui = None
         self.sections = []
@@ -133,28 +123,34 @@ class User(threading.Thread):
     def initialize(self):
         self.send(INITIALIZE)
 
+    def valid_receivied_msg(self, data):
+        """
+
+        :param data:
+        :return:
+        """
+
+        if data:  # not empty string
+            try:
+                data = json.loads(data)
+                return data  # data is jsonable
+            except ValueError:
+                return None  # data isn't jsonable
+        else:
+            return None
+
     def run(self):
-        self.counter = 0
         while True:
             data = self.protocol.recv_one_message()
-            self.counter += 1
-            loop_image = self.data_handling(data)
-            if loop_image:
-                data = self.protocol.recv_one_message()
+            data = self.valid_receivied_msg(data)
 
-                new_img = Image.new(self.img_mode, (self.__width / self.__section_x,
-                                                    self.__height / self.__section_y))
-                new_img.putdata(string_to_raw(data))
-                self.sections[self.curr_section] = new_img
-                if self.curr_section == self.last_section:
-                    self.create_img()
-                self.curr_section = -1
+            if not data:
+                continue
+
+            self.data_handling(data)
 
     def data_handling(self, data):
-        if not data:
-            return None
-        print data[:50]
-        data = json.loads(data)
+
         msg_status = int(data['Status'])
         section = data.get('Section')
 
@@ -167,22 +163,26 @@ class User(threading.Thread):
             self.__section_y = data["SectionY"]
             self.img_mode = data["ImageMode"]
             self.gui = TkinterFrame(self.__width, self.__height)
-            self.sections = [''] * (self.__section_x * self.__section_y)
+            self.sections = [None] * (self.__section_x * self.__section_y)
 
         elif msg_status == QUIT_REQUEST:
-            # TODO - complete
-            pass
+            self.close()
+            return
 
-        # extracting data
-        elif msg_status == CUR_IMG_OPEN_BUILDING:
+        elif msg_status == ROW_SECTIONS_LENGTH:
+            self.last_section = int(data['SectionsLength'])
+            print "Sections length", self.last_section
+
+        elif msg_status == SENDING_SECTION:
             self.curr_section = section
-            self.sections[section] = ''
-            self.last_section = data.get('Section')
-            return True
+            self.sections[section] = raw_data_to_img(string_to_raw(self.protocol.recv_one_message()),
+                                                     self.__width / self.__section_x, self.__height / self.__section_y)
 
-        elif msg_status == LAST_IMG_DONE:
-            print "last count:", self.counter
-            self.create_img()
+            self.last_section -= 1
+
+            if self.last_section == 0:
+                self.create_img()
+                self.last_section = -1
 
     def create_img(self):
 
@@ -196,56 +196,14 @@ class User(threading.Thread):
 
                 start_x = x * (self.__width / self.__section_x)
                 start_y = y * (self.__height / self.__section_y)
-                new_img.paste(self.sections[x * self.__section_x + y].getdata(),
+                new_img.paste(self.sections[x * self.__section_x + y],
                               (start_x, start_y, start_x + end_x, start_y + end_y))
         self.gui.photo = ImageTk.PhotoImage(new_img)
         self.gui.update_image()
 
     def close(self):
-        """ quit from the chat and close socket & program """
-        self.send(QUIT_REQUEST)
+        """ Quit from the connection - close the socket. """
         self.conn_socket.close()  # close socket
-        sys.exit(0)  # quit program
 
 if __name__ == '__main__':
     User().start()
-
-#
-#
-# try:
-#     data = self.conn_socket.recv(100000000)
-# except socket.timeout:  # connection is lost
-#     sys.exit(-1)
-#
-# else:  # data is ok
-#     parts = re.findall(r'{"Status": \d, "Section": \d}', data)
-#     if len(parts) > 0:
-#         index = data.find(parts[0])
-#         if index != -1 and self.cur_section != -1:
-#             self.sections[self.cur_section] += data[:index]
-#
-#         for part in parts:
-#             self.data_handling(part)
-#     elif 'NewID' in data:
-#         self.data_handling(data)
-#     else:
-#         try:
-#             self.sections[self.cur_section] += data
-#         except:
-#             self.data_handling(data)
-# if loop_image:
-#     image_data = ''
-#     while True:
-#         data = self.conn_socket.recv(4096)
-#         if not data:
-#             break
-#         elif STOP_IMAGE_LOOP in data:
-#             image_data += data[:data.index(STOP_IMAGE_LOOP)]
-#             data = data[data.index(STOP_IMAGE_LOOP):]
-#             print data[:-50]
-#             parts = re.findall(r'{"Status": \d, "Section": \d}', data)
-#             [self.data_handling(part) for part in parts]
-#
-#             break
-#         else:
-#             image_data += data

@@ -3,7 +3,7 @@ import json
 import threading
 import select
 from PIL import ImageGrab
-from Utils import Protocol
+from Utils import Protocol, img_to_raw_data, compare_images
 
 # module's attributes
 SERVER_IP = '127.0.0.1'  # address of the server
@@ -12,8 +12,7 @@ PORT = 3337  # the port
 BUFFER = 4096  # memory storage size
 SLEEP_TIME = 0.5
 
-INITIALIZE, QUIT_REQUEST, CUR_IMG_OPEN_BUILDING, CUR_IMG_DONE_BUILDING, LAST_IMG_DONE, CUR_IMG_MID_BUILDING = range(6)
-STOP_IMAGE_LOOP = 'STOP PLEASE'
+INITIALIZE, QUIT_REQUEST, ROW_SECTIONS_LENGTH, SENDING_SECTION = range(4)
 
 
 class User(object):
@@ -36,8 +35,8 @@ class TakeScreenShot(threading.Thread):
         threading.Thread.__init__(self)
         self.pre_images = []
 
-        self.section_x = 1
-        self.section_y = 1
+        self.section_x = 3
+        self.section_y = 3
         self.server = server
 
     def get_images(self):
@@ -58,7 +57,7 @@ class TakeScreenShot(threading.Thread):
                 start_x = x * (width / self.section_x)
                 start_y = y * (height / self.section_y)
 
-                cur_img = list(img.crop((start_x, start_y, start_x + end_x, start_y + end_y)).getdata())
+                cur_img = img.crop((start_x, start_y, start_x + end_x, start_y + end_y))
                 images[x * self.section_x + y] = cur_img
         return images
 
@@ -75,22 +74,14 @@ class TakeScreenShot(threading.Thread):
 
             elif len(self.pre_images) == len(images):
                 for index in images.keys():
-                    if not self.compare_images(images[index], self.pre_images[index]):  # different
+
+                    if not compare_images(images[index], self.pre_images[index]):  # different
                         changes.append(index)
 
+            print 'changes :', len(changes)
             self.pre_images = images  # update for next check
             self.server.send_data(self.pre_images, changes)  # send changes
             # time.sleep(10)
-
-    def compare_images(self, im1, im2):
-        """
-        this function compares between 2 images
-        True if they are the same
-        :param im1, im2: Images
-        :return: boolean
-        """
-
-        return False
 
 
 class Server(threading.Thread):
@@ -119,6 +110,12 @@ class Server(threading.Thread):
         self.screenShotThread = TakeScreenShot(self)
 
     def user_by_id(self, user_id):
+        """
+        this func returns a user object according an ID,
+        if the user isn't exists returned None.
+        :param user_id: the user's id
+        :return: the required user object
+        """
         for user in self.users:
             if user.user_id == user_id:
                 return user
@@ -126,12 +123,15 @@ class Server(threading.Thread):
 
     def initialize(self, user_socket):
         """
-        this func treats for a initialize request,
-        appends a new user
-        :param user_socket: new user's address
+        this func handles an initialize request,
+        coordinates with the client the settings,
+        and appends the user to the system.
+        :param user_socket: new user's socket (address)
         """
 
+        # count the new user
         self.users.append(User(self.id_counter, user_socket))
+
         json_string = json.dumps({"Status": INITIALIZE,
                                   "UserID": self.id_counter,
                                   "ScreenWidth": self.width,
@@ -144,16 +144,19 @@ class Server(threading.Thread):
         # user_socket.sendall(json_string)
         self.id_counter += 1
 
-    def send_json(self, user, status, section):
-        json_string = json.dumps({"Status": status,
-                                  "Section": section})
-        user.protocol.send_one_message(json_string, True)
+    def send_json(self, user, status, section, **kwargs):
+
+        msg_dict = {"Status": status, "Section": section}
+        msg_dict.update(kwargs)
+
+        json_string = json.dumps(msg_dict)
+        user.protocol.send_one_message(json_string)
 
     def send(self, user, m_dict):
         json_string = json.dumps(m_dict)
-        user.protocol.send_one_message(json_string, True)
+        user.protocol.send_one_message(json_string)
 
-    def send_image(self, user, img_bytes, section, last_section):
+    def send_image(self, user, img_bytes, section):
         """
 
         :param user:
@@ -161,39 +164,38 @@ class Server(threading.Thread):
         :param section:
         :return:
         """
-        self.send(user, {"Status": CUR_IMG_OPEN_BUILDING, "Section": section, "LastSection": last_section})
+        self.send(user, {"Status": SENDING_SECTION, "Section": section})
         user.protocol.send_one_message(str(img_bytes))
-
-        # while len(img_bytes) > 0:
-        #
-        #     if len(img_bytes) >= MAX_PACKET_SIZE:
-        #         # self.send_json(user, CUR_IMG_MID_BUILDING, section, str(img_bytes[:MAX_PACKET_SIZE]))
-        #         user.user_socket.send(str(img_bytes[:MAX_PACKET_SIZE]))
-        #         img_bytes = img_bytes[MAX_PACKET_SIZE:]
-        #     else:
-        #         user.user_socket.send(str(img_bytes))
-        #         # self.send_json(user, CUR_IMG_MID_BUILDING, section, str(img_bytes))
-        #         break
-        # user.protocol.send_one_message(STOP_IMAGE_LOOP)
-        # user.user_socket.sendall(STOP_IMAGE_LOOP)
-        # self.send_json(user, CUR_IMG_DONE_BUILDING, section)
 
     def send_data(self, images, changes):
         """
         this func sends each client his requested parts
-        :param images: parts of screen
+        :param images: all parts of the screenshot
         :param changes: new parts from previous screenshot
         """
+
+        # converts `PIL.Image.Image` list to a raw_data list
+        images = {index: img_to_raw_data(images[index]) for index in images}
+
         for user in self.users:
             if user.new_user:
+
+                # TODO - send settings about this row of images
+                self.send_json(user, ROW_SECTIONS_LENGTH, -1, SectionsLength=len(images))
+
                 for index in images:
-                    self.send_image(user, images[index], index, images.keys()[-1])
+                    self.send_image(user, images[index], index)
+                    user.new_user = False
 
             else:
-                for new_image_index in changes:
-                    self.send_image(user, images[new_image_index], new_image_index, 0)
+                for index in changes:
+                    self.send_image(user, images[index], index)
 
-            # self.send_json(user, LAST_IMG_DONE, -1)
+    def close_client(self, user_id):
+        for user in self.users:
+            if user.user_id == user_id:
+                user.user_socket.close()
+                self.users.remove(user)
 
     def run(self):
 
@@ -201,7 +203,8 @@ class Server(threading.Thread):
 
             # read and write sockets lists
             # rlist - clients are sending data currently
-            rlist, wlist, xlist = select.select([self.server_socket] + self.open_client_sockets, self.open_client_sockets, [])
+            rlist, wlist, xlist = select.select([self.server_socket] + self.open_client_sockets,
+                                                self.open_client_sockets, [])
 
             for current_socket in rlist:
 
@@ -214,7 +217,7 @@ class Server(threading.Thread):
 
                     prcl = Protocol(current_socket)
                     data = prcl.recv_one_message()
-                    # data = current_socket.recv(BUFFER)  # input
+
                     if data != '':
 
                         data = json.loads(data)
@@ -223,7 +226,7 @@ class Server(threading.Thread):
                         curr_user = self.user_by_id(user_id)
 
                         if msg_status == INITIALIZE:
-                            print 'Initialized'
+                            print 'user', user_id, 'initialized'
                             self.initialize(current_socket)
 
                             if len(self.users) == 1:
@@ -234,12 +237,6 @@ class Server(threading.Thread):
 
                         elif msg_status == QUIT_REQUEST:
                             self.close_client(user_id)
-
-    def close_client(self, user_id):
-        for user in self.users:
-            if user.user_id == user_id:
-                user.user_socket.close()
-                self.users.remove(user)
 
 if __name__ == '__main__':
     Server().start()

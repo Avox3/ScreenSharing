@@ -2,9 +2,14 @@
   <dictionary name="USER">
     <words>
       <w>addr</w>
+      <w>jsonable</w>
+      <w>prcl</w>
       <w>recv</w>
       <w>recvall</w>
+      <w>rlist</w>
       <w>screenshot</w>
+      <w>wlist</w>
+      <w>xlist</w>
     </words>
   </dictionary>
 </component>
